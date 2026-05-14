@@ -8,13 +8,13 @@ GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 st.set_page_config(page_title="AI Chef & Nutri-Scanner", page_icon="👨‍🍳", layout="wide")
 
-# Стилізація інтерфейсу
+# ВИПРАВЛЕНО: Правильний параметр unsafe_allow_html
 st.markdown("""
     <style>
     .main { background-color: #f5f7f9; }
     .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
     </style>
-    """, unsafe_allow_index=True)
+    """, unsafe_allow_html=True)
 
 st.title("👨‍🍳 AI Chef: Рецепти та Калорії")
 st.write("Вставте посилання на відео або опис страви — я розрахую нутрієнти та навчу готувати.")
@@ -62,9 +62,8 @@ def ask_ai(input_data):
     
     ПРАВИЛА:
     1. Не повторюй інгредієнти.
-    2. Якщо ваги немає в джерелі, припусти логічну вагу.
-    3. Інструкція має бути чіткою та структурованою.
-    4. ТІЛЬКИ JSON, жодного зайвого тексту.
+    2. Інструкція має бути чіткою та структурованою.
+    3. ТІЛЬКИ JSON, жодного зайвого тексту.
     """
     
     payload = {
@@ -79,17 +78,15 @@ def ask_ai(input_data):
         if response.status_code == 200:
             return response.json()['choices'][0]['message']['content']
         else:
-            st.error(f"Помилка API: {response.text}")
             return None
     except Exception as e:
-        st.error(f"Помилка зв'язку: {e}")
         return None
 
 # --- ЛОГІКА ДОДАТКА ---
 
 if st.button("🚀 Отримати повний рецепт"):
     if source_input:
-        with st.spinner('ШІ аналізує страву та пише інструкції...'):
+        with st.spinner('ШІ аналізує страву...'):
             raw_response = ask_ai(source_input)
             
             if raw_response:
@@ -97,7 +94,6 @@ if st.button("🚀 Отримати повний рецепт"):
                 ingredients = data.get('ingredients', [])
                 instructions = data.get('instructions', "")
 
-                # Створюємо дві колонки: зліва інструкції, справа калорії
                 col1, col2 = st.columns([2, 1])
 
                 with col1:
@@ -120,11 +116,7 @@ if st.button("🚀 Отримати повний рецепт"):
                     st.metric("ЗАГАЛЬНА ЕНЕРГІЯ", f"{int(total_cal)} ккал")
                     if chart_data:
                         st.bar_chart(chart_data)
-                
-                # Додатково: Логи для перевірки (можна приховати)
-                with st.expander("📝 Технічні дані"):
-                    st.json(data)
             else:
-                st.error("Не вдалося отримати дані від ШІ.")
+                st.error("Помилка зв'язку з ШІ.")
     else:
-        st.warning("Будь ласка, вставте посилання або опис.")
+        st.warning("Введіть посилання або опис.")
