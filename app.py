@@ -7,120 +7,130 @@ import re
 GROQ_API_KEY = "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"
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-st.set_page_config(page_title="AI Smart Chef Pro", page_icon="⚖️", layout="wide")
+st.set_page_config(page_title="Debug Mode: AI Chef", page_icon="🛠️", layout="wide")
 
-st.title("⚖️ Розумний Аналізатор Рецептів")
-st.write("Стійка версія: розпізнає довгі рецепти та виправляє помилки ШІ.")
+st.title("🛠️ AI Chef: Debug & Trace Mode")
+st.write("Кожний крок запиту тепер логується нижче.")
 
-source_input = st.text_area("Вставте текст рецепта або посилання:", height=150)
+# --- UI ДЛЯ ВВОДУ ---
+source_input = st.text_area("Вставте рецепт:", height=150, help="Сюди можна кидати посилання або текст")
 
-# --- РОБОТА З БАЗОЮ ДАНИХ ---
+# --- СИСТЕМА ЛОГУВАННЯ ---
+def log_debug(title, content):
+    with st.expander(f"🔍 LOG: {title}", expanded=False):
+        if isinstance(content, dict) or isinstance(content, list):
+            st.json(content)
+        else:
+            st.code(content)
+
+# --- ФУНКЦІЇ ОБРОБКИ ---
+
+def try_repair_json(broken_json):
+    """Спроба закрити обірваний JSON масив або об'єкт"""
+    if not broken_json: return None
+    # Видаляємо все після останньої коми, якщо JSON обірвався
+    last_comma = broken_json.rfind(',')
+    if last_comma != -1:
+        attempt = broken_json[:last_comma] + "]}"
+        try: return json.loads(attempt)
+        except: pass
+    return None
 
 def fetch_calories(simple_name):
-    """Шукає калорії в Open Food Facts"""
+    """Шукає калорії з логуванням запиту"""
     clean_query = re.sub(r'[^а-яА-Яa-zA-Z\s]', '', simple_name.lower()).strip()
     url = f"https://world.openfoodfacts.org/cgi/search.pl?search_terms={clean_query}&search_simple=1&action=process&json=1&page_size=1"
-    
     try:
         r = requests.get(url, timeout=5).json()
         if 'products' in r and len(r['products']) > 0:
             nutri = r['products'][0].get('nutriments', {})
             cal = nutri.get('energy-kcal_100g') or nutri.get('energy-kcal') or (nutri.get('energy_100g', 0) / 4.184)
             return round(float(cal), 1)
-    except:
-        pass
+    except Exception as e:
+        log_debug(f"OpenFoodFacts Error ({clean_query})", str(e))
     return 0
 
-# --- РОБОТА З ШІ ---
-
-def ask_ai(content):
+def ask_ai_debug(content):
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json"
     }
     
+    # Спрощуємо промпт, щоб зменшити кількість токенів на виході
     prompt = f"""
-    Ти — кулінарний дата-інженер. Твоє завдання — перетворити текст на структурований JSON.
-    ДЖЕРЕЛО: "{content}"
-    
-    СТРУКТУРА ВІДПОВІДІ:
+    Analyze this recipe: "{content}".
+    Return ONLY a JSON object:
     {{
-      "original_steps": "копія кроків СЛОВО В СЛОВО без змін",
-      "list_for_user": ["інгредієнт 1 як у тексті", "інгредієнт 2..."],
-      "list_for_api": [
-        {{"search_name": "назва для бази (напр. 'курка')", "weight": вага_в_грамах}}
-      ]
+      "steps": "Original instructions word-for-word.",
+      "items": [{{"n": "product name", "w": weight_in_grams}}]
     }}
-    ПРАВИЛА:
-    1. Якщо вага не вказана, постав логічну (яйце=50, цибуля=100, вода=200).
-    2. Поверни ТІЛЬКИ JSON. Не пиши нічого до або після нього.
+    Rules: If weight unknown, use average (egg=50, onion=100). No talk, just JSON.
     """
     
     payload = {
         "model": "llama-3.1-8b-instant",
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0,
-        "max_tokens": 3000, # Достатньо для довгих інструкцій
+        "max_tokens": 2048, # Зменшили, щоб ШІ не розганявся на гігантські тексти
         "response_format": {"type": "json_object"}
     }
     
     try:
-        response = requests.post(GROQ_URL, json=payload, headers=headers, timeout=25)
+        log_debug("API Payload", payload)
+        response = requests.post(GROQ_URL, json=payload, headers=headers, timeout=30)
+        
+        log_debug(f"API Response Status: {response.status_code}", response.text)
+        
         if response.status_code == 200:
             return response.json()['choices'][0]['message']['content']
         else:
-            st.error(f"Помилка API Groq: {response.status_code} - {response.text}")
+            st.error(f"Groq API Error {response.status_code}")
             return None
     except Exception as e:
-        st.error(f"Помилка з'єднання: {str(e)}")
+        st.error(f"Connection Error: {str(e)}")
         return None
 
-# --- ВІДОБРАЖЕННЯ ---
+# --- ГОЛОВНИЙ ЦИКЛ ---
 
-if st.button("🚀 Аналізувати"):
+if st.button("🚀 Запустити аналіз з логами"):
     if source_input:
-        with st.spinner('ШІ аналізує текст...'):
-            raw_res = ask_ai(source_input)
+        with st.spinner('AI працює...'):
+            raw_res = ask_ai_debug(source_input)
             
             if raw_res:
                 try:
-                    # На випадок, якщо ШІ додав Markdown розмітку ```json ... ```
-                    clean_res = raw_res.strip()
-                    if clean_res.startswith("```"):
-                        clean_res = re.sub(r'^```json\s*|\s*```$', '', clean_res)
+                    data = json.loads(raw_res)
+                    log_debug("Parsed Data", data)
                     
-                    data = json.loads(clean_res)
+                    c1, c2 = st.columns([1.5, 1])
                     
-                    col1, col2 = st.columns([1.5, 1])
+                    with c1:
+                        st.subheader("📝 Кроки")
+                        st.info(data.get('steps', 'Немає даних'))
                     
-                    with col1:
-                        st.subheader("📝 Приготування (Оригінал)")
-                        steps = data.get('original_steps', "Кроки не знайдені")
-                        st.info(steps)
-                        
-                        st.subheader("🛒 Список продуктів")
-                        for ing in data.get('list_for_user', []):
-                            st.write(f"• {ing}")
-                    
-                    with col2:
-                        st.subheader("📊 Розрахунок Ккал")
-                        total_cal = 0
-                        
-                        for item in data.get('list_for_api', []):
-                            cals_per_100 = fetch_calories(item['search_name'])
-                            item_cal = (cals_per_100 * item['weight']) / 100
-                            total_cal += item_cal
-                            
-                            icon = "✅" if item_cal > 0 else "⚪"
-                            st.write(f"{icon} **{item['search_name']}** ({item['weight']}г) — {int(item_cal)} ккал")
+                    with c2:
+                        st.subheader("📊 Калорії")
+                        total = 0
+                        for item in data.get('items', []):
+                            c_100 = fetch_calories(item['n'])
+                            weight = item['w']
+                            res_cal = (c_100 * weight) / 100
+                            total += res_cal
+                            st.write(f"🔹 {item['n']} ({weight}г): {int(res_cal)} ккал")
                         
                         st.divider()
-                        st.metric("ЗАГАЛЬНА ЕНЕРГІЯ", f"{int(total_cal)} ккал")
+                        st.metric("РАЗОМ", f"{int(total)} ккал")
                         
-                except Exception as e:
-                    st.error(f"Помилка парсингу JSON: {str(e)}")
-                    st.code(raw_res) # Показуємо, що саме повернув ШІ для відладки
+                except Exception as parse_err:
+                    st.error(f"Помилка парсингу JSON: {parse_err}")
+                    repaired = try_repair_json(raw_res)
+                    if repaired:
+                        st.warning("Спроба відновити дані з пошкодженого JSON...")
+                        st.json(repaired)
             else:
-                st.error("ШІ повернув порожню відповідь.")
+                st.error("ШІ не повернув результат. Перевірте LOG нижче.")
     else:
-        st.warning("Вставте рецепт.")
+        st.warning("Введіть текст.")
+
+st.divider()
+st.caption("Режим налагодження активовано. Всі відповіді Groq доступні в блоках Expanders.")
