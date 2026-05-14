@@ -30,28 +30,51 @@ def get_nutrition(item_name):
     return {"name": item_name, "cal": 0}
 
 def ask_gemini_about_link(input_data):
-    # Промпт, який змушує Gemini аналізувати посилання
+    # Додаємо налаштування, щоб ШІ не блокував запити через фільтри безпеки
     prompt = f"""
-    Ти професійний шеф-кухар та дієтолог. 
-    Твоє завдання: проаналізуй цей контент: "{input_data}".
-    Якщо це посилання на YouTube, спробуй дізнатися склад страви. 
-    Якщо це текст, витягни інгредієнти.
+    Ти — кулінарний аналітик. Твоє завдання: витягни список інгредієнтів з цього джерела: "{input_data}".
     
-    ВАЖЛИВО: Поверни відповідь ТІЛЬКИ як JSON список об'єктів.
-    Формат: [{{"name": "назва продукту українською", "weight": вага_в_грамах}}]
-    Якщо вага не вказана, постав середню порцію для цієї страви.
+    Якщо це посилання на сайт чи відео, використай свої знання про цей рецепт або проаналізуй доступний текст.
+    Якщо ти не можеш відкрити посилання, спробуй здогадатися про склад страви за назвою в URL.
+    
+    Відповідь надай ВИКЛЮЧНО у форматі JSON списку:
+    [{"name": "назва продукту", "weight": вага_в_грамах}]
+    
+    Не пиши ніяких пояснень, тільки JSON. Якщо інгредієнтів немає, поверни [].
     """
     
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "safetySettings": [
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+        ]
+    }
+    
     try:
-        response = requests.post(GEMINI_URL, json=payload, timeout=10)
-        raw_text = response.json()['candidates'][0]['content']['parts'][0]['text']
-        clean_json = raw_text.replace("```json", "").replace("```", "").strip()
-        return json.loads(clean_json)
+        response = requests.post(GEMINI_URL, json=payload, timeout=15)
+        resp_json = response.json()
+        
+        # Перевірка, чи є відповідь у списку candidates
+        if 'candidates' in resp_json and resp_json['candidates'][0]['content']['parts']:
+            raw_text = resp_json['candidates'][0]['content']['parts'][0]['text']
+            # Витягуємо тільки частину з JSON (якщо ШІ додав зайвий текст)
+            start_index = raw_text.find('[')
+            end_index = raw_text.rfind(']') + 1
+            if start_index != -1 and end_index != 0:
+                clean_json = raw_text[start_index:end_index]
+                return json.loads(clean_json)
+        else:
+            # Вивід помилки від самого Google API для діагностики
+            st.error(f"Помилка API: {resp_json.get('error', {}).get('message', 'Невідома помилка')}")
+            return []
+            
     except Exception as e:
-        st.error(f"Помилка аналізу ШІ: {e}")
+        st.error(f"Помилка обробки: {str(e)}")
         return []
-
+    return []
 if st.button("🔍 Розпізнати рецепт"):
     if source_input:
         with st.spinner('ШІ "дивиться" відео та шукає інгредієнти...'):
