@@ -47,7 +47,7 @@ def ask_ai_debug(content):
     """
     
     payload = {
-        "model": "llama-3.1-70b-versatile",
+        "model": "llama-3.3-70b-versatile", # ОНОВЛЕНО МОДЕЛЬ
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0
     }
@@ -64,7 +64,7 @@ if st.button("🚀 Виконати повний аналіз"):
         with st.spinner('AI аналізує склад та шукає БЖВ...'):
             response = ask_ai_debug(source_input)
             
-            # --- ЛОГИ ТЕПЕР ТУТ (ВИВОДЯТЬСЯ ЗАВЖДИ) ---
+            # Логи виводяться ЗАВЖДИ за домовленістю
             if response is not None:
                 with st.expander("🛠️ DEBUG: FULL API RESPONSE", expanded=True):
                     st.write(f"Status Code: {response.status_code}")
