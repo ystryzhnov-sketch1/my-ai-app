@@ -13,7 +13,7 @@ st.title("🧬 AI Chef: Рецепт + БЖВ")
 st.write("Аналіз калорій, білків, жирів та вуглеводів на основі тексту рецепта.")
 
 # --- UI ---
-source_input = st.text_area("Вставте текст рецепта:", height=200, help="Копіюйте текст інгредієнтів та кроків прямо з сайту.")
+source_input = st.text_area("Вставте текст рецепта (не посилання!):", height=200, placeholder="Скопіюйте сюди інгредієнти та кроки приготування з сайту...")
 
 def fetch_nutrition(simple_name):
     """Пошук нутрієнтів у базі OpenFoodFacts"""
@@ -37,17 +37,21 @@ def fetch_nutrition(simple_name):
 def ask_ai_debug(content):
     headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
     
+    # Оновлений промпт за твоїм погодженням (пункти 1 та 2)
     prompt = f"""
-    Analyze this recipe text: "{content}"
-    Extract the following into a JSON object:
-    1. "steps": full instructions verbatim.
-    2. "api_data": list of items [{{ "n": "product name in Ukrainian", "w": weight_in_grams }}]
+    Analyze this text: "{content}"
+    If there is no recipe content, return {{"error": "No recipe found"}}.
+    Do not invent or imagine information. Extract only what is present.
     
-    Return ONLY JSON. No explanations.
+    Format as JSON:
+    1. "steps": full instructions verbatim.
+    2. "api_data": [{{ "n": "product name in UKRAINIAN", "w": weight_in_grams }}]
+    
+    Return ONLY JSON.
     """
     
     payload = {
-        "model": "llama-3.3-70b-versatile", # ОНОВЛЕНО МОДЕЛЬ
+        "model": "llama-3.3-70b-versatile",
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0
     }
@@ -61,10 +65,9 @@ def ask_ai_debug(content):
 
 if st.button("🚀 Виконати повний аналіз"):
     if source_input:
-        with st.spinner('AI аналізує склад та шукає БЖВ...'):
+        with st.spinner('AI аналізує реальний текст...'):
             response = ask_ai_debug(source_input)
             
-            # Логи виводяться ЗАВЖДИ за домовленістю
             if response is not None:
                 with st.expander("🛠️ DEBUG: FULL API RESPONSE", expanded=True):
                     st.write(f"Status Code: {response.status_code}")
@@ -77,44 +80,54 @@ if st.button("🚀 Виконати повний аналіз"):
                 raw_text = response.json()['choices'][0]['message']['content']
                 
                 try:
-                    start = raw_text.find('{')
-                    end = raw_text.rfind('}') + 1
-                    data = json.loads(raw_text[start:end])
+                    # Покращений парсинг JSON (пункт 3)
+                    json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+                    if json_match:
+                        data = json.loads(json_match.group())
+                    else:
+                        data = json.loads(raw_text)
                     
-                    col1, col2 = st.columns([1.5, 1])
-                    
-                    with col1:
-                        st.subheader("📖 Інструкція")
-                        st.info(data.get('steps', 'Не знайдено'))
+                    if "error" in data:
+                        st.warning("⚠️ AI каже: " + data["error"])
+                    else:
+                        col1, col2 = st.columns([1.5, 1])
                         
-                    with col2:
-                        st.subheader("📊 Нутрієнти (БЖВ)")
-                        totals = {"cal": 0, "p": 0, "f": 0, "c": 0}
-                        
-                        items = data.get('api_data', data.get('items', []))
-                        for item in items:
-                            n = fetch_nutrition(item['n'])
-                            w = item.get('w', 0)
+                        with col1:
+                            st.subheader("📖 Інструкція")
+                            steps = data.get('steps', [])
+                            if isinstance(steps, list):
+                                for s in steps: st.write(f"• {s}")
+                            else:
+                                st.write(steps)
                             
-                            c_item = (n['cal'] * w) / 100
-                            p_item = (n['p'] * w) / 100
-                            f_item = (n['f'] * w) / 100
-                            carb_item = (n['c'] * w) / 100
+                        with col2:
+                            st.subheader("📊 Нутрієнти (БЖВ)")
+                            totals = {"cal": 0, "p": 0, "f": 0, "c": 0}
                             
-                            totals["cal"] += c_item
-                            totals["p"] += p_item
-                            totals["f"] += f_item
-                            totals["c"] += carb_item
+                            items = data.get('api_data', [])
+                            for item in items:
+                                n = fetch_nutrition(item['n'])
+                                w = item.get('w', 0)
+                                
+                                c_item = (n['cal'] * w) / 100
+                                p_item = (n['p'] * w) / 100
+                                f_item = (n['f'] * w) / 100
+                                carb_item = (n['c'] * w) / 100
+                                
+                                totals["cal"] += c_item
+                                totals["p"] += p_item
+                                totals["f"] += f_item
+                                totals["c"] += carb_item
+                                
+                                st.write(f"🔹 **{item['n']}** ({w}г)")
+                                st.caption(f"Ккал: {int(c_item)} | Б: {round(p_item,1)}г | Ж: {round(f_item,1)}г | В: {round(carb_item,1)}г")
                             
-                            st.write(f"🔹 **{item['n']}** ({w}г)")
-                            st.caption(f"Ккал: {int(c_item)} | Б: {round(p_item,1)}г | Ж: {round(f_item,1)}г | В: {round(carb_item,1)}г")
-                        
-                        st.divider()
-                        st.metric("ЗАГАЛЬНА ЕНЕРГІЯ", f"{int(totals['cal'])} ккал")
-                        
-                        st.write("**Співвідношення БЖВ (грами):**")
-                        b_data = {"Білки": totals['p'], "Жири": totals['f'], "Вуглеводи": totals['c']}
-                        st.bar_chart(b_data)
+                            st.divider()
+                            st.metric("ЗАГАЛЬНА ЕНЕРГІЯ", f"{int(totals['cal'])} ккал")
+                            
+                            st.write("**Співвідношення БЖВ (грами):**")
+                            b_data = {"Білки": totals['p'], "Жири": totals['f'], "Вуглеводи": totals['c']}
+                            st.bar_chart(b_data)
                         
                 except Exception as e:
                     st.error(f"Помилка розбору даних: {e}")
@@ -124,4 +137,4 @@ if st.button("🚀 Виконати повний аналіз"):
         st.warning("Вставте текст рецепта.")
 
 st.divider()
-st.caption("Логи залишаються на екрані для діагностики.")
+st.caption("Логи залишаються на екрані.")
