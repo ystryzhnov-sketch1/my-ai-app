@@ -1,60 +1,63 @@
 import streamlit as st
 import requests
-import json
 
-# Налаштування сторінки
-st.set_page_config(page_title="AI Recipe Tester", page_icon="🥗")
-st.title("🥗 AI Nutri-Scanner Prototype")
-st.write("Це безкоштовна веб-версія для тестування функцій розбору рецептів.")
+st.set_page_config(page_title="AI Recipe Scanner", page_icon="🍲")
 
-# 1. Поле для вводу (симуляція посилання або тексту)
-recipe_input = st.text_area("Вставте текст рецепта або опис відео:", 
-                            placeholder="Приклад: Салат з 200г курячого філе, 100г томатів та ложкою олії...")
+# Заголовок
+st.title("🍲 AI Recipe Scanner (Web Test)")
+st.info("Вставте посилання на відео або текст рецепта нижче.")
 
-# 2. Функція пошуку в безкоштовній базі продуктів
+# Поле для введення
+url_input = st.text_input("Посилання на TikTok / Reels / YouTube:", placeholder="https://www.tiktok.com/@user/video/...")
+text_manual = st.text_area("Або вставте опис відео/текст рецепта сюди:")
+
+# Функція пошуку калорій (Open Food Facts)
 def get_nutrition(item_name):
     url = f"https://world.openfoodfacts.org/cgi/search.pl?search_terms={item_name}&search_simple=1&action=process&json=1&page_size=1"
     try:
-        r = requests.get(url).json()
+        r = requests.get(url, timeout=5).json()
         if r['products']:
             p = r['products'][0]
+            nutri = p.get('nutriments', {})
             return {
-                "cal": p['nutriments'].get('energy-kcal_100g', 0),
-                "p": p['nutriments'].get('proteins_100g', 0),
-                "f": p['nutriments'].get('fat_100g', 0),
-                "c": p['nutriments'].get('carbohydrates_100g', 0)
+                "name": p.get('product_name_uk', p.get('product_name', item_name)),
+                "cal": nutri.get('energy-kcal_100g', 0),
+                "p": nutri.get('proteins_100g', 0),
+                "f": nutri.get('fat_100g', 0),
+                "c": nutri.get('carbohydrates_100g', 0)
             }
     except:
         return None
     return None
 
-# 3. Кнопка аналізу
-if st.button("Проаналізувати ШІ ✨"):
-    if recipe_input:
-        with st.spinner('ШІ розбирає інгредієнти...'):
-            # ТУТ СИМУЛЯЦІЯ РОБОТИ ШІ (можна підключити Groq API безкоштовно)
-            # Для тесту ми візьмемо приклад розбору:
-            st.success("ШІ розпізнав інгредієнти!")
+# Кнопка запуску
+if st.button("🚀 Проаналізувати"):
+    if url_input or text_manual:
+        with st.spinner('ШІ аналізує вміст...'):
+            # СИМУЛЯЦІЯ РОБОТИ ШІ (Тут у майбутньому буде запит до Gemini/Groq)
+            # Для тесту ми «витягуємо» дані з прикладу
+            st.subheader("📊 Результати аналізу:")
             
-            # Припустимо, ШІ витягнув ці дані (це те, що зробить Llama 3)
-            mock_extracted = [
-                {"name": "Chicken", "weight": 200},
-                {"name": "Tomato", "weight": 100},
-                {"name": "Olive Oil", "weight": 10}
+            # Тимчасовий список (імітація того, що знайшов ШІ)
+            # В ідеалі ШІ бачить посилання і каже: "Там куряче філе і рис"
+            mock_data = [
+                {"name": "Куряче філе", "weight": 250},
+                {"name": "Рис басматі", "weight": 100},
+                {"name": "Олія", "weight": 10}
             ]
             
             total_cal = 0
-            cols = st.columns(len(mock_extracted))
-            
-            for i, item in enumerate(mock_extracted):
-                nutri = get_nutrition(item['name'])
-                if nutri:
-                    item_cal = (nutri['cal'] * item['weight']) / 100
+            for item in mock_data:
+                data = get_nutrition(item['name'])
+                if data:
+                    item_cal = (data['cal'] * item['weight']) / 100
                     total_cal += item_cal
-                    with cols[i]:
-                        st.metric(item['name'], f"{item['weight']}г", f"{int(item_cal)} ккал")
+                    st.write(f"✅ **{data['name']}**: {item['weight']}г — {int(item_cal)} ккал")
             
             st.divider()
-            st.header(f"Загальна калорійність: {int(total_cal)} ккал")
+            st.metric("Загальна калорійність", f"{int(total_cal)} ккал")
+            
+            # Додаємо графік для наочності
+            st.bar_chart({item['name']: (get_nutrition(item['name'])['cal'] * item['weight'] / 100) for item in mock_data})
     else:
-        st.warning("Будь ласка, введіть текст для аналізу.")
+        st.warning("Будь ласка, додайте дані для аналізу.")
