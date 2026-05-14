@@ -7,39 +7,44 @@ import re
 GROQ_API_KEY = "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"
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-st.set_page_config(page_title="AI Chef DEBUG", page_icon="🧪", layout="wide")
+st.set_page_config(page_title="AI Chef Pro (BZhV)", page_icon="🧬", layout="wide")
 
-st.title("🧪 AI Chef: Debug Mode ON")
-st.write("Всі дані, що приходять від ШІ, тепер логуються внизу.")
+st.title("🧬 AI Chef: Рецепт + БЖВ")
+st.write("Аналіз калорій, білків, жирів та вуглеводів на основі тексту рецепта.")
 
 # --- UI ---
-source_input = st.text_area("Вставте текст зі сторінки:", height=200)
+source_input = st.text_area("Вставте текст рецепта:", height=200, help="Копіюйте текст інгредієнтів та кроків прямо з сайту.")
 
-def fetch_calories(simple_name):
-    """Пошук у базі OpenFoodFacts"""
+def fetch_nutrition(simple_name):
+    """Пошук нутрієнтів у базі OpenFoodFacts"""
     clean_query = re.sub(r'[^а-яА-Яa-zA-Z\s]', '', simple_name.lower()).strip()
-    if not clean_query: return 0
+    if not clean_query: return {"cal": 0, "p": 0, "f": 0, "c": 0}
+    
     url = f"https://world.openfoodfacts.org/cgi/search.pl?search_terms={clean_query}&search_simple=1&action=process&json=1&page_size=1"
     try:
         r = requests.get(url, timeout=5).json()
         if 'products' in r and len(r['products']) > 0:
             nutri = r['products'][0].get('nutriments', {})
-            cal = nutri.get('energy-kcal_100g') or nutri.get('energy-kcal') or 0
-            return float(cal)
+            return {
+                "cal": float(nutri.get('energy-kcal_100g', 0)),
+                "p": float(nutri.get('proteins_100g', 0)),
+                "f": float(nutri.get('fat_100g', 0)),
+                "c": float(nutri.get('carbohydrates_100g', 0))
+            }
     except: pass
-    return 0
+    return {"cal": 0, "p": 0, "f": 0, "c": 0}
 
 def ask_ai_debug(content):
     headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
     
+    # Спрощений промпт (за домовленістю)
     prompt = f"""
-    You are a Recipe Parser. Extract data from this messy text: "{content}"
+    Analyze this recipe text: "{content}"
+    Extract the following into a JSON object:
+    1. "steps": full instructions verbatim.
+    2. "api_data": list of items [{{ "n": "product name in Ukrainian", "w": weight_in_grams }}]
     
-    Rules:
-    1. Steps: word-for-word instructions.
-    2. API Data: [{{ "n": "product in Ukrainian", "w": weight_in_grams }}]
-    
-    Return ONLY JSON.
+    Return ONLY JSON. No explanations.
     """
     
     payload = {
@@ -55,20 +60,18 @@ def ask_ai_debug(content):
         st.error(f"Network Error: {e}")
         return None
 
-if st.button("🚀 Аналізувати з логуванням"):
+if st.button("🚀 Виконати повний аналіз"):
     if source_input:
-        with st.spinner('AI працює...'):
+        with st.spinner('AI аналізує склад та шукає БЖВ...'):
             response = ask_ai_debug(source_input)
             
             if response and response.status_code == 200:
                 raw_text = response.json()['choices'][0]['message']['content']
                 
-                # --- ВИВОДИМО ЛОГ ---
                 with st.expander("🛠️ DEBUG: RAW RESPONSE", expanded=True):
                     st.code(raw_text)
                 
                 try:
-                    # Очищення JSON
                     start = raw_text.find('{')
                     end = raw_text.rfind('}') + 1
                     data = json.loads(raw_text[start:end])
@@ -77,29 +80,44 @@ if st.button("🚀 Аналізувати з логуванням"):
                     
                     with col1:
                         st.subheader("📖 Інструкція")
-                        st.write(data.get('steps', 'Не знайдено'))
+                        st.info(data.get('steps', 'Не знайдено'))
                         
                     with col2:
-                        st.subheader("📊 Калорійність")
-                        total = 0
-                        # Шукаємо дані в різних можливих ключах
+                        st.subheader("📊 Нутрієнти (БЖВ)")
+                        totals = {"cal": 0, "p": 0, "f": 0, "c": 0}
+                        
                         items = data.get('api_data', data.get('items', []))
                         for item in items:
-                            c_100 = fetch_calories(item['n'])
+                            n = fetch_nutrition(item['n'])
                             w = item.get('w', 0)
-                            c_final = (c_100 * w) / 100
-                            total += c_final
-                            st.write(f"🔹 {item['n']} ({w}г) — {int(c_final)} ккал")
+                            
+                            # Розрахунок на вагу
+                            c_item = (n['cal'] * w) / 100
+                            p_item = (n['p'] * w) / 100
+                            f_item = (n['f'] * w) / 100
+                            carb_item = (n['c'] * w) / 100
+                            
+                            totals["cal"] += c_item
+                            totals["p"] += p_item
+                            totals["f"] += f_item
+                            totals["c"] += carb_item
+                            
+                            st.write(f"🔹 **{item['n']}** ({w}г)")
+                            st.caption(f"Ккал: {int(c_item)} | Б: {round(p_item,1)}г | Ж: {round(f_item,1)}г | В: {round(carb_item,1)}г")
                         
                         st.divider()
-                        st.metric("УСЬОГО", f"{int(total)} ккал")
+                        st.metric("ЗАГАЛЬНА ЕНЕРГІЯ", f"{int(totals['cal'])} ккал")
+                        
+                        # Візуалізація БЖВ
+                        st.write("**Співвідношення БЖВ (грами):**")
+                        b_data = {"Білки": totals['p'], "Жири": totals['f'], "Вуглеводи": totals['c']}
+                        st.bar_chart(b_data)
+                        
                 except Exception as e:
-                    st.error(f"Помилка парсингу: {e}")
+                    st.error(f"Помилка розбору даних: {e}")
             else:
-                st.error("ШІ не відповів або помилка API.")
-                if response: st.write(response.text)
+                st.error("Помилка API Groq")
+                if response:
+                    st.json(response.json()) # Вивід детальної помилки за домовленістю
     else:
-        st.warning("Вставте текст.")
-
-st.divider()
-st.caption("Логи автоматично з'являються після натискання кнопки.")
+        st.warning("Вставте текст рецепта.")
