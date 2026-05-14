@@ -5,38 +5,34 @@ import re
 from bs4 import BeautifulSoup
 
 # --- КОНФІГУРАЦІЯ ---
+# Переконайся, що ці рядки точно такі, як тут
 GROQ_API_KEY = "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"
-GROQ_URL = "[https://api.groq.com/openai/v1/chat/completions](https://api.groq.com/openai/v1/chat/completions)"
+GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
 
-st.set_page_config(page_title="AI Chef Pro (Reliable)", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="AI Chef Pro (Fixed)", page_icon="🛡️", layout="wide")
 
-st.title("🛡️ AI Chef: Максимальна надійність")
-st.write("Система захищена від помилок розкладки та форматування JSON.")
+st.title("🛡️ AI Chef: Фінальна версія")
 
 # --- ФУНКЦІЇ ---
 
 def get_text_from_url(url):
-    """Надійне читання тексту з сайту"""
     try:
+        url = url.strip() # Прибираємо зайві пробіли
         headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Видаляємо все зайве, що заважає аналізу
         for el in soup(["script", "style", "nav", "footer", "header", "aside"]):
             el.extract()
-            
         return soup.get_text(separator=' ', strip=True)
     except Exception as e:
         return f"Помилка при читанні сайту: {e}"
 
 def fetch_nutrition(simple_name):
-    """Пошук нутрієнтів у базі"""
     clean_query = re.sub(r'[^а-яА-Яa-zA-Z\s]', '', simple_name.lower()).strip()
     if not clean_query: return {"cal": 0, "p": 0, "f": 0, "c": 0}
     
-    url = f"[https://world.openfoodfacts.org/cgi/search.pl?search_terms=](https://world.openfoodfacts.org/cgi/search.pl?search_terms=){clean_query}&search_simple=1&action=process&json=1&page_size=1"
+    url = f"https://world.openfoodfacts.org/cgi/search.pl?search_terms={clean_query}&search_simple=1&action=process&json=1&page_size=1"
     try:
         r = requests.get(url, timeout=5).json()
         if 'products' in r and len(r['products']) > 0:
@@ -51,17 +47,15 @@ def fetch_nutrition(simple_name):
     return {"cal": 0, "p": 0, "f": 0, "c": 0}
 
 def ask_ai_debug(content):
-    headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
     
-    # Промпт із жорсткими інструкціями щодо формату
     prompt = f"""
     Analyze text: "{content[:12000]}"
-    Extract ONLY the recipe found in the text.
-    
-    JSON REQUIREMENTS:
-    - Keys MUST be: "steps" (list of strings) and "api_data" (list of objects).
-    - "api_data" objects MUST have keys "n" (product name in Ukrainian) and "w" (weight in grams).
-    
+    Extract ONLY the recipe. 
+    JSON keys MUST be "steps" and "api_data" (with "n" and "w").
     Return VALID JSON ONLY.
     """
     
@@ -70,16 +64,20 @@ def ask_ai_debug(content):
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0
     }
-    return requests.post(GROQ_URL, json=payload, headers=headers, timeout=30)
+    
+    # Використовуємо прямий URL, щоб уникнути помилки InvalidSchema
+    return requests.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers, timeout=30)
 
 # --- UI ---
 source_input = st.text_input("Вставте посилання або текст рецепта:")
 
-if st.button("🚀 Виконати надійний аналіз"):
+if st.button("🚀 Запустити аналіз"):
     if source_input:
+        source_input = source_input.strip()
         final_text = source_input
-        if source_input.strip().startswith("http"):
-            with st.spinner('Зчитую дані з веб-сторінки...'):
+        
+        if source_input.startswith("http"):
+            with st.spinner('Зчитую сайт...'):
                 final_text = get_text_from_url(source_input)
                 if "Помилка" in final_text:
                     st.error(final_text)
@@ -88,38 +86,30 @@ if st.button("🚀 Виконати надійний аналіз"):
         with st.spinner('AI обробляє дані...'):
             response = ask_ai_debug(final_text)
             
-            if response and response.status_code == 200:
-                with st.expander("🛠️ DEBUG: FULL API RESPONSE", expanded=True):
+            if response is not None and response.status_code == 200:
+                with st.expander("🛠️ DEBUG LOG", expanded=False):
                     st.json(response.json())
                 
                 raw_content = response.json()['choices'][0]['message']['content']
                 
                 try:
-                    # НАДІЙНИЙ ПАРСИНГ: шукаємо JSON у будь-якому тексті
                     json_match = re.search(r'\{.*\}', raw_content, re.DOTALL)
-                    if not json_match:
-                        raise ValueError("JSON не знайдено у відповіді ШІ")
-                    
                     data = json.loads(json_match.group())
                     
                     col1, col2 = st.columns([1.5, 1])
-                    
                     with col1:
                         st.subheader("📖 Інструкція")
-                        steps = data.get('steps', [])
-                        if isinstance(steps, list):
-                            for i, s in enumerate(steps, 1): st.write(f"**{i}.** {s}")
-                        else: st.write(steps)
+                        for i, s in enumerate(data.get('steps', []), 1): st.write(f"{i}. {s}")
                         
                     with col2:
-                        st.subheader("📊 Аналіз БЖВ")
+                        st.subheader("📊 Розрахунок БЖВ")
                         totals = {"cal": 0, "p": 0, "f": 0, "c": 0}
-                        
                         items = data.get('api_data', [])
+                        
                         for item in items:
-                            # ЗАХИСТ ВІД РОЗКЛАДКИ ТА ІНШИХ КЛЮЧІВ
-                            name = item.get('n') or item.get('н') or item.get('name') or item.get('назва')
-                            weight = item.get('w') or item.get('в') or item.get('weight') or item.get('вага') or 0
+                            # Універсальний пошук ключів (захист від ШІ)
+                            name = item.get('n') or item.get('н') or item.get('name')
+                            weight = item.get('w') or item.get('в') or item.get('weight') or 0
                             
                             if name:
                                 n = fetch_nutrition(name)
@@ -128,18 +118,15 @@ if st.button("🚀 Виконати надійний аналіз"):
                                 totals["p"] += (n['p'] * weight) / 100
                                 totals["f"] += (n['f'] * weight) / 100
                                 totals["c"] += (n['c'] * weight) / 100
-                                
-                                st.write(f"🔹 **{name}** ({weight}г)")
-                                st.caption(f"{int(c_item)} ккал | Б:{round((n['p']*weight)/100,1)} Ж:{round((n['f']*weight)/100,1)} В:{round((n['c']*weight)/100,1)}")
+                                st.write(f"🔹 **{name}** ({weight}г) — {int(c_item)} ккал")
                         
                         st.divider()
-                        st.metric("ЗАГАЛЬНА ЕНЕРГІЯ", f"{int(totals['cal'])} ккал")
+                        st.metric("УСЬОГО", f"{int(totals['cal'])} ккал")
                         st.bar_chart({"Б": totals['p'], "Ж": totals['f'], "В": totals['c']})
                         
                 except Exception as e:
-                    st.error(f"Помилка розбору даних: {e}")
-                    st.write("Спробуйте ще раз або перевірте DEBUG LOG.")
+                    st.error(f"Помилка розбору: {e}")
             else:
-                st.error("Помилка зв'язку з AI")
+                st.error(f"Помилка API Groq. Статус: {response.status_code if response else 'Немає відповіді'}")
     else:
-        st.warning("Будь ласка, вкажіть джерело.")
+        st.warning("Введіть дані.")
