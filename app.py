@@ -37,7 +37,6 @@ def fetch_nutrition(simple_name):
 def ask_ai_debug(content):
     headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
     
-    # Спрощений промпт (за домовленістю)
     prompt = f"""
     Analyze this recipe text: "{content}"
     Extract the following into a JSON object:
@@ -65,11 +64,17 @@ if st.button("🚀 Виконати повний аналіз"):
         with st.spinner('AI аналізує склад та шукає БЖВ...'):
             response = ask_ai_debug(source_input)
             
+            # --- ЛОГИ ТЕПЕР ТУТ (ВИВОДЯТЬСЯ ЗАВЖДИ) ---
+            if response is not None:
+                with st.expander("🛠️ DEBUG: FULL API RESPONSE", expanded=True):
+                    st.write(f"Status Code: {response.status_code}")
+                    try:
+                        st.json(response.json())
+                    except:
+                        st.text(response.text)
+            
             if response and response.status_code == 200:
                 raw_text = response.json()['choices'][0]['message']['content']
-                
-                with st.expander("🛠️ DEBUG: RAW RESPONSE", expanded=True):
-                    st.code(raw_text)
                 
                 try:
                     start = raw_text.find('{')
@@ -91,7 +96,6 @@ if st.button("🚀 Виконати повний аналіз"):
                             n = fetch_nutrition(item['n'])
                             w = item.get('w', 0)
                             
-                            # Розрахунок на вагу
                             c_item = (n['cal'] * w) / 100
                             p_item = (n['p'] * w) / 100
                             f_item = (n['f'] * w) / 100
@@ -108,7 +112,6 @@ if st.button("🚀 Виконати повний аналіз"):
                         st.divider()
                         st.metric("ЗАГАЛЬНА ЕНЕРГІЯ", f"{int(totals['cal'])} ккал")
                         
-                        # Візуалізація БЖВ
                         st.write("**Співвідношення БЖВ (грами):**")
                         b_data = {"Білки": totals['p'], "Жири": totals['f'], "Вуглеводи": totals['c']}
                         st.bar_chart(b_data)
@@ -117,7 +120,8 @@ if st.button("🚀 Виконати повний аналіз"):
                     st.error(f"Помилка розбору даних: {e}")
             else:
                 st.error("Помилка API Groq")
-                if response:
-                    st.json(response.json()) # Вивід детальної помилки за домовленістю
     else:
         st.warning("Вставте текст рецепта.")
+
+st.divider()
+st.caption("Логи залишаються на екрані для діагностики.")
