@@ -6,64 +6,67 @@ import json
 GROQ_API_KEY = "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"
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-st.set_page_config(page_title="AI Chef & Nutri-Scanner", page_icon="👨‍🍳", layout="wide")
+st.set_page_config(page_title="AI Chef Verbatim", page_icon="👨‍🍳", layout="wide")
 
-# ВИПРАВЛЕНО: Правильний параметр unsafe_allow_html
 st.markdown("""
     <style>
-    .main { background-color: #f5f7f9; }
+    .main { background-color: #f8f9fa; }
+    .recipe-box { background-color: #ffffff; padding: 20px; border-radius: 15px; border-left: 5px solid #ff4b4b; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
     .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("👨‍🍳 AI Chef: Рецепти та Калорії")
-st.write("Вставте посилання на відео або опис страви — я розрахую нутрієнти та навчу готувати.")
+st.title("👨‍🍳 AI Екстрактор: Рецепти Клопотенка та інших")
+st.write("Копіює рецепт слово в слово та рахує калорії.")
 
 # --- ВВІД ДАНИХ ---
-source_input = st.text_area("Посилання на відео/сайт або назва страви:", 
-                            placeholder="Наприклад: https://youtube.com/... або 'дієтична лазанья з кабачків'",
+source_input = st.text_area("Вставте посилання або скопійований текст із сайту:", 
+                            placeholder="Вставте посилання на рецепт...",
                             height=100)
 
 # --- ФУНКЦІЇ ---
 
 def get_nutrition(item_name):
-    """Шукає калорійність у базі Open Food Facts"""
-    url = f"https://world.openfoodfacts.org/cgi/search.pl?search_terms={item_name}&search_simple=1&action=process&json=1&page_size=1"
+    """Покращений пошук калорійності"""
+    # Очищуємо назву від зайвих слів для кращого пошуку
+    search_query = item_name.split(',')[0].split('(')[0].replace("червоний", "").strip()
+    url = f"https://world.openfoodfacts.org/cgi/search.pl?search_terms={search_query}&search_simple=1&action=process&json=1&page_size=1"
     try:
         r = requests.get(url, timeout=5).json()
         if 'products' in r and len(r['products']) > 0:
             p = r['products'][0]
             nutri = p.get('nutriments', {})
+            cal = nutri.get('energy-kcal_100g') or nutri.get('energy-kcal') or 0
             return {
                 "name": p.get('product_name_uk', p.get('product_name', item_name)),
-                "cal": nutri.get('energy-kcal_100g', 0)
+                "cal": cal
             }
     except:
         pass
     return {"name": item_name, "cal": 0}
 
 def ask_ai(input_data):
-    """Запит до Llama 3.1 для створення рецепта та списку продуктів"""
+    """Запит до ШІ для точного копіювання тексту"""
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json"
     }
     
     prompt = f"""
-    Ти — шеф-кухар та дієтолог. Проаналізуй: "{input_data}".
+    Ти — асистент-архіваріус. Твоє завдання: максимально точно витягнути дані з джерела: "{input_data}".
     
-    Поверни відповідь ВИКЛЮЧНО у форматі JSON:
+    Поверни відповідь ТІЛЬКИ у форматі JSON:
     {{
-      "ingredients": [
-        {{"name": "назва продукту", "weight": вага_в_грамах}}
+      "original_ingredients": ["список інгредієнтів точно як у тексті"],
+      "clean_ingredients": [
+        {{"name": "чиста назва продукту для пошуку в базі", "weight": вага_цифрою}}
       ],
-      "instructions": "Покроковий рецепт приготування українською мовою."
+      "original_instructions": "Покрокові кроки приготування СЛОВО В СЛОВО як в оригіналі."
     }}
     
-    ПРАВИЛА:
-    1. Не повторюй інгредієнти.
-    2. Інструкція має бути чіткою та структурованою.
-    3. ТІЛЬКИ JSON, жодного зайвого тексту.
+    ВАЖЛИВО: 
+    1. Поле original_instructions має містити пряме цитування тексту приготування.
+    2. Якщо це посилання на відомий сайт (наприклад Klopotenko), згадай цей рецепт і витягни його кроки.
     """
     
     payload = {
@@ -75,48 +78,53 @@ def ask_ai(input_data):
     
     try:
         response = requests.post(GROQ_URL, json=payload, headers=headers, timeout=20)
-        if response.status_code == 200:
-            return response.json()['choices'][0]['message']['content']
-        else:
-            return None
-    except Exception as e:
+        return response.json()['choices'][0]['message']['content'] if response.status_code == 200 else None
+    except:
         return None
 
 # --- ЛОГІКА ДОДАТКА ---
 
-if st.button("🚀 Отримати повний рецепт"):
+if st.button("🚀 Розпізнати рецепт"):
     if source_input:
-        with st.spinner('ШІ аналізує страву...'):
+        with st.spinner('Синхронізація з оригіналом...'):
             raw_response = ask_ai(source_input)
             
             if raw_response:
                 data = json.loads(raw_response)
-                ingredients = data.get('ingredients', [])
-                instructions = data.get('instructions', "")
+                orig_ing = data.get('original_ingredients', [])
+                clean_ing = data.get('clean_ingredients', [])
+                instructions = data.get('original_instructions', "")
 
-                col1, col2 = st.columns([2, 1])
+                col1, col2 = st.columns([1.5, 1])
 
                 with col1:
-                    st.subheader("📖 Покрокове приготування")
-                    st.info(instructions)
+                    st.subheader("📖 Оригінальний рецепт")
+                    st.markdown(f"<div class='recipe-box'>{instructions}</div>", unsafe_allow_html=True)
+                    
+                    st.subheader("🛒 Список продуктів (як на сайті)")
+                    for ing in orig_ing:
+                        st.write(f"▪️ {ing}")
                     
                 with col2:
-                    st.subheader("📊 Харчова цінність")
+                    st.subheader("📊 Розрахунок Ккал")
                     total_cal = 0
-                    chart_data = {}
                     
-                    for item in ingredients:
+                    for item in clean_ing:
                         nutri = get_nutrition(item['name'])
-                        item_cal = (nutri['cal'] * item['weight']) / 100
+                        # Якщо база видала 0, спробуємо підставити середнє значення (опціонально)
+                        cals_per_100g = nutri['cal'] if nutri['cal'] > 0 else 0
+                        
+                        item_cal = (cals_per_100g * item['weight']) / 100
                         total_cal += item_cal
-                        chart_data[nutri['name']] = item_cal
-                        st.write(f"🔹 {nutri['name']} ({item['weight']}г): **{int(item_cal)} ккал**")
+                        
+                        status_icon = "🟢" if item_cal > 0 else "⚪"
+                        st.write(f"{status_icon} **{item['name']}** ({item['weight']}г): {int(item_cal)} ккал")
                     
                     st.divider()
                     st.metric("ЗАГАЛЬНА ЕНЕРГІЯ", f"{int(total_cal)} ккал")
-                    if chart_data:
-                        st.bar_chart(chart_data)
+                    if total_cal == 0:
+                        st.warning("База даних Open Food Facts не знайшла калорійність для деяких назв. Спробуйте змінити назву інгредієнта на більш просту.")
             else:
-                st.error("Помилка зв'язку з ШІ.")
+                st.error("ШІ не зміг отримати доступ до даних за посиланням.")
     else:
-        st.warning("Введіть посилання або опис.")
+        st.warning("Вставте посилання.")
