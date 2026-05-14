@@ -2,19 +2,19 @@ import streamlit as st
 import requests
 import json
 
-# Конфігурація - ВИПРАВЛЕНО: Стабільний URL для Gemini 1.5 Flash
+# Конфігурація - ВИПРАВЛЕНО: Використовуємо -latest версію моделі
 GEMINI_API_KEY = "AIzaSyDDaPe3W_cS6qaUxX6uY0XcZrzEfxN83lE"
-GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+# Спробуємо найбільш універсальний шлях v1beta
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={GEMINI_API_KEY}"
 
-st.set_page_config(page_title="AI Recipe Scanner", page_icon="🥗", layout="centered")
+st.set_page_config(page_title="AI Recipe Scanner", page_icon="🥗")
 
-st.title("🥗 AI Scanner: Від рецепта до калорій")
-st.write("Аналіз посилань та тексту за допомогою Gemini 1.5 Flash")
+st.title("🥗 AI Scanner: Виправлена версія")
+st.write("Якщо ви бачите це, додаток готовий до тесту.")
 
-source_input = st.text_input("Вставте посилання на відео/сайт або текст рецепта:", placeholder="https://...")
+source_input = st.text_input("Вставте посилання або текст:", placeholder="Приклад: салат з 200г курки")
 
 def get_nutrition(item_name):
-    # Пошук в Open Food Facts (Безкоштовна база)
     url = f"https://world.openfoodfacts.org/cgi/search.pl?search_terms={item_name}&search_simple=1&action=process&json=1&page_size=1"
     try:
         r = requests.get(url, timeout=5).json()
@@ -29,78 +29,55 @@ def get_nutrition(item_name):
         pass
     return {"name": item_name, "cal": 0}
 
-def ask_gemini_about_link(input_data):
-    # Промпт з подвійними дужками {{ }} для уникнення ValueError
+def ask_gemini(input_data):
+    # Промпт з подвійними дужками
     prompt_text = f"""
-    Ти — кулінарний аналітик. Твоє завдання: витягни інгредієнти з джерела: "{input_data}".
-    Поверни відповідь ВИКЛЮЧНО у форматі JSON списку:
-    [
-      {{"name": "назва продукту", "weight": вага_в_грамах}}
-    ]
-    Якщо вага не вказана, припусти логічну середню порцію. Не пиши нічого, крім JSON.
+    Ти — дієтолог. Витягни інгредієнти з цього тексту/посилання: "{input_data}".
+    Поверни JSON список об'єктів: [{{"name": "назва", "weight": вага_в_грамах}}].
+    Тільки JSON, без тексту.
     """
     
-    # Структура запиту згідно з документацією Google
     payload = {
         "contents": [{
-            "parts": [{
-                "text": prompt_text
-            }]
+            "parts": [{"text": prompt_text}]
         }]
     }
     
-    headers = {'Content-Type': 'application/json'}
-    
-    with st.expander("🛠️ Технічні логи (Debug)"):
+    with st.expander("🛠️ Логи розробника"):
         try:
-            st.write(f"Відправка запиту на: {GEMINI_URL.split('?')[0]}")
-            response = requests.post(GEMINI_URL, json=payload, headers=headers, timeout=15)
-            
-            st.write(f"Статус відповіді: {response.status_code}")
-            
-            resp_json = response.json()
+            response = requests.post(GEMINI_URL, json=payload, timeout=15)
+            st.write(f"Статус: {response.status_code}")
             
             if response.status_code == 200:
-                if 'candidates' in resp_json:
-                    raw_text = resp_json['candidates'][0]['content']['parts'][0]['text']
-                    st.code(raw_text, language="json")
-                    
-                    # Чистимо текст від можливого сміття (markdown)
-                    clean_text = raw_text.replace("```json", "").replace("```", "").strip()
-                    start = clean_text.find('[')
-                    end = clean_text.rfind(']') + 1
-                    
-                    if start != -1 and end != 0:
-                        return json.loads(clean_text[start:end])
-                else:
-                    st.error("Поле 'candidates' відсутнє. Можливо, контент заблоковано.")
-            else:
-                st.error(f"Помилка API: {resp_json}")
+                result = response.json()
+                raw_content = result['candidates'][0]['content']['parts'][0]['text']
+                st.code(raw_content)
                 
+                # Чистимо JSON
+                clean_json = raw_content.replace("```json", "").replace("```", "").strip()
+                start = clean_json.find('[')
+                end = clean_json.rfind(']') + 1
+                return json.loads(clean_json[start:end])
+            else:
+                st.error(f"Помилка API: {response.text}")
+                # Якщо flash не знайдено, спробуємо дати пораду
+                if "not found" in response.text.lower():
+                    st.info("Порада: Спробуйте змінити модель на 'gemini-pro' у коді.")
         except Exception as e:
-            st.error(f"Помилка: {str(e)}")
+            st.error(f"Помилка: {e}")
     return []
 
-if st.button("🚀 Розпізнати та порахувати"):
+if st.button("🚀 Аналіз"):
     if source_input:
-        ingredients = ask_gemini_about_link(source_input)
-        
+        ingredients = ask_gemini(source_input)
         if ingredients:
-            st.subheader("📊 Аналіз складу:")
             total_cal = 0
-            chart_data = {}
-            
             for item in ingredients:
-                nutri = get_nutrition(item['name'])
-                item_cal = (nutri['cal'] * item['weight']) / 100
+                data = get_nutrition(item['name'])
+                item_cal = (data['cal'] * item['weight']) / 100
                 total_cal += item_cal
-                chart_data[nutri['name']] = item_cal
-                st.write(f"✅ **{nutri['name']}** ({item['weight']}г) — **{int(item_cal)} ккал**")
-            
+                st.write(f"✅ {data['name']} ({item['weight']}г) — {int(item_cal)} ккал")
             st.divider()
-            st.metric("ЗАГАЛЬНА КАЛОРІЙНІСТЬ", f"{int(total_cal)} ккал")
-            st.bar_chart(chart_data)
-        else:
-            st.info("Не вдалося отримати інгредієнти. Спробуйте вставити назву страви або опис текстом.")
+            st.metric("Разом", f"{int(total_cal)} ккал")
     else:
-        st.warning("Введіть посилання або текст.")
+        st.warning("Введіть дані.")
