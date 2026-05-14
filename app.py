@@ -1,130 +1,122 @@
 import streamlit as st
 import requests
 import json
+import re
 
 # --- КОНФІГУРАЦІЯ ---
 GROQ_API_KEY = "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"
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-st.set_page_config(page_title="AI Chef Verbatim", page_icon="👨‍🍳", layout="wide")
+st.set_page_config(page_title="AI Smart Chef", page_icon="⚖️", layout="wide")
 
 st.markdown("""
     <style>
-    .main { background-color: #f8f9fa; }
-    .recipe-box { background-color: #ffffff; padding: 20px; border-radius: 15px; border-left: 5px solid #ff4b4b; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    .stAlert { padding: 10px; border-radius: 5px; }
+    .main { background-color: #fcfcfc; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("👨‍🍳 AI Екстрактор: Рецепти Клопотенка та інших")
-st.write("Копіює рецепт слово в слово та рахує калорії.")
+st.title("⚖️ Розумний Аналізатор Рецептів")
+st.write("ШІ автоматично адаптує назви продуктів під вимоги глобальних баз даних.")
 
-# --- ВВІД ДАНИХ ---
-source_input = st.text_area("Вставте посилання або скопійований текст із сайту:", 
-                            placeholder="Вставте посилання на рецепт...",
-                            height=100)
+source_input = st.text_area("Вставте рецепт (текст або посилання):", height=150)
 
-# --- ФУНКЦІЇ ---
+# --- РОБОТА З БАЗОЮ ДАНИХ ---
 
-def get_nutrition(item_name):
-    """Покращений пошук калорійності"""
-    # Очищуємо назву від зайвих слів для кращого пошуку
-    search_query = item_name.split(',')[0].split('(')[0].replace("червоний", "").strip()
-    url = f"https://world.openfoodfacts.org/cgi/search.pl?search_terms={search_query}&search_simple=1&action=process&json=1&page_size=1"
+def fetch_calories(simple_name):
+    """Шукає калорії за максимально спрощеною назвою"""
+    # Очищуємо від зайвих символів
+    clean_query = re.sub(r'[^а-яА-Яa-zA-Z\s]', '', simple_name).strip()
+    url = f"https://world.openfoodfacts.org/cgi/search.pl?search_terms={clean_query}&search_simple=1&action=process&json=1&page_size=1"
+    
     try:
         r = requests.get(url, timeout=5).json()
         if 'products' in r and len(r['products']) > 0:
-            p = r['products'][0]
-            nutri = p.get('nutriments', {})
-            cal = nutri.get('energy-kcal_100g') or nutri.get('energy-kcal') or 0
-            return {
-                "name": p.get('product_name_uk', p.get('product_name', item_name)),
-                "cal": cal
-            }
+            nutri = r['products'][0].get('nutriments', {})
+            # Шукаємо ккал у різних полях бази
+            cal = nutri.get('energy-kcal_100g') or nutri.get('energy-kcal') or nutri.get('energy_100g', 0) / 4.184
+            return round(float(cal), 1)
     except:
         pass
-    return {"name": item_name, "cal": 0}
+    return 0
 
-def ask_ai(input_data):
-    """Запит до ШІ для точного копіювання тексту"""
+# --- РОБОТА З ШІ ---
+
+def ask_ai(content):
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json"
     }
     
+    # Промпт тепер вимагає "search_name" - ідеальну назву для пошуковика
     prompt = f"""
-    Ти — асистент-архіваріус. Твоє завдання: максимально точно витягнути дані з джерела: "{input_data}".
+    Ти — кулінарний дата-інженер. Розклади рецепт: "{content}".
     
-    Поверни відповідь ТІЛЬКИ у форматі JSON:
-    {{
-      "original_ingredients": ["список інгредієнтів точно як у тексті"],
-      "clean_ingredients": [
-        {{"name": "чиста назва продукту для пошуку в базі", "weight": вага_цифрою}}
-      ],
-      "original_instructions": "Покрокові кроки приготування СЛОВО В СЛОВО як в оригіналі."
+    ПРАВИЛА:
+    1. original_steps: копіюй кроки СЛОВО В СЛОВО.
+    2. list_for_user: список інгредієнтів як в оригіналі.
+    3. list_for_api: список об'єктів {{
+        "original": "як у тексті (напр. 'дві великі морквини')",
+        "search_name": "ІДЕАЛЬНЕ слово для пошуку (напр. 'морква')",
+        "weight": вага в грамах (число)
     }}
     
-    ВАЖЛИВО: 
-    1. Поле original_instructions має містити пряме цитування тексту приготування.
-    2. Якщо це посилання на відомий сайт (наприклад Klopotenko), згадай цей рецепт і витягни його кроки.
+    Якщо вага не вказана, вирахуй середню (цибуля=100г, олія=15г, яйце=50г).
+    ПОВЕРНИ ТІЛЬКИ JSON.
     """
     
     payload = {
         "model": "llama-3.1-8b-instant",
         "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0,
+        "temperature": 0.1,
         "response_format": {"type": "json_object"}
     }
     
     try:
         response = requests.post(GROQ_URL, json=payload, headers=headers, timeout=20)
-        return response.json()['choices'][0]['message']['content'] if response.status_code == 200 else None
+        return response.json()['choices'][0]['message']['content']
     except:
         return None
 
-# --- ЛОГІКА ДОДАТКА ---
+# --- ІНТЕРФЕЙС ---
 
-if st.button("🚀 Розпізнати рецепт"):
+if st.button("🚀 Аналізувати"):
     if source_input:
-        with st.spinner('Синхронізація з оригіналом...'):
-            raw_response = ask_ai(source_input)
-            
-            if raw_response:
-                data = json.loads(raw_response)
-                orig_ing = data.get('original_ingredients', [])
-                clean_ing = data.get('clean_ingredients', [])
-                instructions = data.get('original_instructions', "")
-
+        with st.spinner('ШІ оптимізує запити до бази даних...'):
+            res = ask_ai(source_input)
+            if res:
+                data = json.loads(res)
+                
                 col1, col2 = st.columns([1.5, 1])
-
+                
                 with col1:
-                    st.subheader("📖 Оригінальний рецепт")
-                    st.markdown(f"<div class='recipe-box'>{instructions}</div>", unsafe_allow_html=True)
+                    st.subheader("📝 Оригінальна інструкція")
+                    st.info(data.get('original_steps'))
                     
-                    st.subheader("🛒 Список продуктів (як на сайті)")
-                    for ing in orig_ing:
-                        st.write(f"▪️ {ing}")
-                    
+                    st.subheader("🛒 Інгредієнти")
+                    for ing in data.get('list_for_user', []):
+                        st.write(f"• {ing}")
+                
                 with col2:
-                    st.subheader("📊 Розрахунок Ккал")
+                    st.subheader("📊 Розрахунок енергії")
                     total_cal = 0
                     
-                    for item in clean_ing:
-                        nutri = get_nutrition(item['name'])
-                        # Якщо база видала 0, спробуємо підставити середнє значення (опціонально)
-                        cals_per_100g = nutri['cal'] if nutri['cal'] > 0 else 0
+                    for item in data.get('list_for_api', []):
+                        # Використовуємо саме search_name для бази
+                        cals_per_100 = fetch_calories(item['search_name'])
                         
-                        item_cal = (cals_per_100g * item['weight']) / 100
+                        # Якщо база нічого не дала, ШІ пробує вгадати (fallback)
+                        item_cal = (cals_per_100 * item['weight']) / 100
                         total_cal += item_cal
                         
-                        status_icon = "🟢" if item_cal > 0 else "⚪"
-                        st.write(f"{status_icon} **{item['name']}** ({item['weight']}г): {int(item_cal)} ккал")
+                        if item_cal > 0:
+                            st.success(f"✅ **{item['search_name']}** ({item['weight']}г) — {int(item_cal)} ккал")
+                        else:
+                            st.warning(f"⚠️ **{item['search_name']}** ({item['weight']}г) — база не відповіла")
                     
                     st.divider()
-                    st.metric("ЗАГАЛЬНА ЕНЕРГІЯ", f"{int(total_cal)} ккал")
-                    if total_cal == 0:
-                        st.warning("База даних Open Food Facts не знайшла калорійність для деяких назв. Спробуйте змінити назву інгредієнта на більш просту.")
+                    st.metric("ЗАГАЛЬНА КАЛОРІЙНІСТЬ", f"{int(total_cal)} ккал")
             else:
-                st.error("ШІ не зміг отримати доступ до даних за посиланням.")
+                st.error("Помилка обробки тексту.")
     else:
-        st.warning("Вставте посилання.")
+        st.warning("Будь ласка, вставте текст рецепта.")
