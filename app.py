@@ -2,10 +2,9 @@ import streamlit as st
 import requests
 import json
 
-# Конфігурація
+# Спробуй змінити URL на цей (версія v1 і повна назва моделі)
 GEMINI_API_KEY = "AIzaSyDDaPe3W_cS6qaUxX6uY0XcZrzEfxN83lE"
-GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
 st.set_page_config(page_title="AI Scanner Debug Mode", page_icon="🛠️")
 
 st.title("🛠️ AI Scanner + Debug Logs")
