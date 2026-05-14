@@ -2,19 +2,19 @@ import streamlit as st
 import requests
 import json
 
-# КОНФІГУРАЦІЯ GROQ (Llama 3)
-# Отримайте безкоштовний ключ тут: https://console.groq.com/keys
+# КОНФІГУРАЦІЯ GROQ
 GROQ_API_KEY = "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"
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 st.set_page_config(page_title="AI Recipe Scanner", page_icon="🥗")
 
-st.title("🥗 Безкоштовний AI Сканер (Llama 3)")
-st.write("Аналіз інгредієнтів без обмежень Google API.")
+st.title("🥗 AI Scanner: Перевірена версія (2026)")
+st.write("Аналіз інгредієнтів через Llama 3.1")
 
 source_input = st.text_input("Вставте текст або посилання:", placeholder="Наприклад: 2 яйця та 100г бекону")
 
 def get_nutrition(item_name):
+    """Шукає дані про калорійність у відкритій базі"""
     url = f"https://world.openfoodfacts.org/cgi/search.pl?search_terms={item_name}&search_simple=1&action=process&json=1&page_size=1"
     try:
         r = requests.get(url, timeout=5).json()
@@ -29,56 +29,54 @@ def get_nutrition(item_name):
         pass
     return {"name": item_name, "cal": 0}
 
-def ask_llama(input_data):
+def ask_ai(input_data):
+    """Запит до ШІ для розпізнавання інгредієнтів"""
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json"
     }
     
     prompt = f"""
-    Ти — кулінарний помічник. Витягни інгредієнти та їх вагу з цього тексту: "{input_data}".
+    Ти — професійний дієтолог. Твоє завдання: витягни інгредієнти та їх вагу з тексту або опису відео за посиланням: "{input_data}".
     Поверни відповідь ТІЛЬКИ у форматі JSON масиву:
     [
-      {{"name": "назва продукту", "weight": 100}}
+      {{"name": "назва продукту українською", "weight": вага_в_грамах}}
     ]
-    Якщо вага не вказана, постав середню порцію. Не пиши нічого, крім JSON.
+    Якщо вага не вказана, припусти середню порцію. Не пиши жодного тексту, крім JSON.
     """
     
     payload = {
-        "model": "llama3-8b-8192",
+        "model": "llama-3.1-8b-instant",  # Оновлена модель
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.1
     }
     
-    with st.expander("🛠️ Debug Logs"):
+    with st.expander("🛠️ Технічний звіт"):
         try:
             response = requests.post(GROQ_URL, json=payload, headers=headers, timeout=15)
-            st.write(f"Статус: {response.status_code}")
-            
             if response.status_code == 200:
                 result = response.json()
                 raw_content = result['choices'][0]['message']['content']
-                st.code(raw_content)
+                st.code(raw_content, language="json")
                 
-                # Очищення JSON
+                # Очищення від Markdown
                 start = raw_content.find('[')
                 end = raw_content.rfind(']') + 1
                 return json.loads(raw_content[start:end])
             else:
-                st.error(f"Помилка: {response.text}")
+                st.error(f"Помилка API: {response.text}")
         except Exception as e:
             st.error(f"Помилка: {e}")
     return []
 
-if st.button("🚀 Розрахувати"):
+if st.button("🚀 Аналізувати склад"):
     if source_input:
-        if GROQ_API_KEY == "ВАШ_КЛЮЧ_GROQ_ТУТ":
-            st.error("Будь ласка, вставте свій API ключ від Groq!")
-        else:
-            ingredients = ask_llama(source_input)
+        with st.spinner('ШІ розшифровує рецепт...'):
+            ingredients = ask_ai(source_input)
             if ingredients:
-                st.subheader("📊 Результати:")
+                st.subheader("📊 Результати розрахунку:")
                 total_cal = 0
+                
                 for item in ingredients:
                     data = get_nutrition(item['name'])
                     item_cal = (data['cal'] * item['weight']) / 100
@@ -86,6 +84,8 @@ if st.button("🚀 Розрахувати"):
                     st.write(f"✅ **{data['name']}** ({item['weight']}г) — **{int(item_cal)} ккал**")
                 
                 st.divider()
-                st.metric("ЗАГАЛЬНА СУМА", f"{int(total_cal)} ккал")
+                st.metric("ЗАГАЛЬНА ЕНЕРГІЯ", f"{int(total_cal)} ккал")
+            else:
+                st.warning("ШІ не зміг розпізнати продукти. Спробуйте вставити текст інгредієнтів.")
     else:
-        st.warning("Введіть дані.")
+        st.info("Будь ласка, вставте дані у поле вище.")
